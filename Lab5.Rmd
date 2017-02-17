@@ -1,0 +1,199 @@
+---
+title: "Lab5: R Notebook"
+output: html_notebook
+---
+
+
+```{r setup, include=FALSE}
+library(knitr)
+library(formatR)
+knitr::opts_chunk$set(
+      echo = TRUE,
+      comment=NA,
+      warning=FALSE,
+      message=FALSE,
+#      tidy = TRUE,
+#      tidy.opts=list(blank=FALSE, width.cutoff=60,size = 'tiny'),
+      fig.width=5, 
+      fig.height=4 )
+
+suppressMessages(library(ggplot2))
+suppressMessages(library(dplyr))
+library(foreign)
+library(xtable)
+library(stargazer)
+```
+
+Read in NES Data and clean up data from 1992
+
+```{r data, echo=F}
+# Data are at http://www.stat.columbia.edu/~gelman/arm/examples/nes
+
+nes <- read.dta("http://www.stat.columbia.edu/~gelman/arm/examples/nes/nes5200_processed_voters_realideo.dta", convert.factors=F)
+# Data cleaning
+
+
+nes1992 = nes %>% filter(!is.na(presvote)) 
+nes1992[is.na(nes1992)] = "missing"  # recode other NA's as missing
+
+nes1992 = nes1992 %>% filter(year == 1992) %>%
+                      filter(presvote %in% 1:2)  %>%
+                      mutate(gender = factor(gender, levels=c("1","2"), labels = c("male", "female" )),
+                             race = factor(race, labels = c("white", "black", "asian",
+                                                            "native american", "hispanic", "missing")),
+                             black= race =="black",
+                             income = factor(income),
+                             educ = factor(educ1, labels= c("no high school", "high school graduate", "some college", "college graduate", "missing")),
+                             vote = presvote == 2,
+                             partyid = factor(partyid3, labels= c("democrats", "independents", "republicans", "apolitical", "missing")),
+                             ideo = factor(ideo, labels= c("liberal", "moderate", "conservative", "missing")))
+
+#summary(nes1992)                           
+```
+
+## Voting model with interactions and a subset of predictors  (exclued race for now)
+
+
+```{r}
+# see code for variable coding
+nes1992 = dplyr::select(nes1992,  black, 
+                        gender, educ, income, partyid, 
+                        ideo, vote)
+vote.glm = glm(vote ~ .^2, data=nes1992,
+               family="binomial")  
+
+```
+
+Stepwise with AIC
+
+```{r step}
+best.step = step(vote.glm, k=2)  # AIC
+
+```
+
+Deviance is going up with more complex models due to over-fitting that leads to some probabilities being 0/1. Contribution of each point to the deviance is
+$$
+\log(\hat{\pi_i}^{y_i} (1 - \hat \pi_i)^{1 - y_i})
+$$
+When the data agree with the prediction of 0/1 the contribution to the deviance is zero, but when there is a mismatch we get in the case $y_i  = 1$ and $\pi_i \approx 0$  
+$$ \log(\hat{\pi}_i)
+$$
+or 
+$$ 
+\log( 1- \hat{\pi}_i)
+$$
+
+so the more extreme the over-fitting the larger the deviance.
+
+
+Summary of the best AIC model
+
+
+```{r}
+summary(best.step)
+```
+
+Is this satisfactory?
+
+Repeat this using $k = n$ for BIC.  Are the models the same or different?  Explain.
+
+```{r}
+# add code
+```
+
+
+##  Enumeration with bestglm
+
+
+```{r bestAIC, warning=F}
+library(bestglm)
+vote.AIC = bestglm(Xy=nes1992, family=binomial, 
+                   IC="AIC", RequireFullEnumerationQ = T)
+```
+
+
+Notes:  dataframe limited to variables under consideration with the response last
+
+```{r}
+summary(vote.AIC$BestModel)
+```
+
+
+Best BIC model 
+```{r bestBIC, include=F, echo=F}
+vote.BIC = bestglm(Xy=nes1992, family=binomial,
+                   IC="BIC", RequireFullEnumerationQ = T)
+
+summary(vote.BIC$BestModel)
+```
+
+
+Use model.matrix to create the additional dummy variables for interactoins and add to the dataframe and run again.   Do you have the same model(s) as with the stepwise procedure?
+
+
+## Stochastic sampling of models
+
+```{r BAS}
+# library(devtools)
+# install_github("merliseclyde/BAS")   # get version 1.4.3 latest
+library(BAS)
+vote.BAS = bas.glm(vote ~ ., data=nes1992,
+                   family=binomial,
+                   method="MCMC", n.models=20000,
+                   betaprior=bic.prior(n=nrow(nes1992)),
+                   modelprior=uniform())
+```
+
+May be slightly different as dummy variables for a factor are not forced to be either all in or all out.
+
+```{r}
+# bug in plot(vote.bas) in v 1.4.2 and 1.4.3 for this example...
+# par(mfrow=c(2,2))
+# plot(vote.BAS) 
+```
+
+Top models
+
+```{r}
+
+image(vote.BAS, rotate=F)
+```
+
+Summary of BAS output
+
+
+```{r}
+summary(vote.BAS)
+
+```
+
+BIC and add interactions
+
+```{r}
+vote.BAS = bas.glm(vote ~ .^2, data=nes1992,
+                   family=binomial,
+                   method="MCMC", n.models=20000,
+                   betaprior=bic.prior(n = nrow(nes1992)),
+                   modelprior=uniform())
+```
+
+```{r}
+image(vote.bic, rotate=T)
+```
+
+Posterior Inclusion Probabilities
+```{r}
+plot(vote.bic, which=4)
+```
+
+
+Diagnostics  of MCMC - did we run long enough?
+
+
+
+```{r}
+diagnostics(vote.bic)
+```
+
+
+See the help pages and vignette for more details!
